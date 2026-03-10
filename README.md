@@ -70,3 +70,16 @@ forge create Counter --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbe
 
 
 cast wallet import --mnemonic "test test test test test test test test test test test junk" -k <KEYSTORE_DIR> <ACCOUNT_NAME>
+
+### Get Wallet address
+
+cast wallet address --keystore ./keys/for_deploy
+
+
+## Depoly
+
+forge script script/XXToken.s.sol \
+  --keystore keys/for_deploy \
+  --rpc-url sepolia \
+  --broadcast \
+  --verify
