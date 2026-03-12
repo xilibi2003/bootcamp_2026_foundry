@@ -74,7 +74,7 @@ cast wallet import --mnemonic "test test test test test test test test test test
 ### Get Wallet address
 
 cast wallet address --keystore ./keys/for_deploy
-
+0x1E1C0979e6C7CBdDD9E066a51F7df1aab3AfCfeC
 
 ## Depoly
 
@@ -83,3 +83,19 @@ forge script script/XXToken.s.sol \
   --rpc-url sepolia \
   --broadcast \
   --verify
+
+
+forge script script/DeployMyNFT.s.sol:DeployMyNFT --rpc-url https://go.getblock.io/02667b699f05444ab2c64f9bff28f027 --keystore keys/for_deploy --broadcast
+
+
+https://go.getblock.io/02667b699f05444ab2c64f9bff28f027
+
+
+
+编写一个简单的 NFTMarket 合约，使用 @src/ERC1363.sol Token 来买卖 NFT， NFTMarket 的函数有：
+
+list() : 实现上架功能，NFT 持有者可以设定一个价格（需要多少个 Token 购买该 NFT）并上架 NFT 到 NFTMarket，上架之后，其他人才可以购买。
+
+buyNFT() : 普通的购买 NFT 功能，用户转入所定价的 token 数量，获得对应的 NFT。
+
+实现 @src/IERC1363Receiver.sol 所要求的接收者方法 onTransferReceived ，在 onTransferReceived 中实现NFT 购买功能(注意扩展的转账需要添加一个额外数据参数)。
