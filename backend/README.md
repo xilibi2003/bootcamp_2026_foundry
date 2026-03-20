@@ -42,3 +42,27 @@ Example:
 ```bash
 curl "http://localhost:3001/api/transfers/0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38?page=1&limit=20"
 ```
+
+## Generate Test Transfers
+
+If your `MyToken` contract is deployed on local Anvil at `0x07B5A5ADaCedF233AADbe3f2862aac7ae21fBc0d`, run:
+
+```bash
+cd backend
+npm run generate:transfers
+```
+
+The script uses the default Anvil first account as sender and sends several `transfer` transactions to other Anvil test accounts, so the indexer can capture fresh `Transfer` logs.
+
+## CLI Wallet
+
+The CLI wallet reads `ANVIL_RPC_URL`, `TOKEN_ADDRESS`, and `PRIVATE_KEY` from `.env`, then sends an ERC20 `transfer` using a human-readable `amount`.
+
+Example:
+
+```bash
+cd backend
+npm run wallet -- --to 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38 --amount 1.5
+```
+
+The script will fetch the token `decimals` on-chain and convert `1.5` into the raw ERC20 amount automatically before submitting the transaction.

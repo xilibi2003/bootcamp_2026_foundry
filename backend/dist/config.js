@@ -27,9 +27,9 @@ function parseAddress(name, fallback) {
 }
 exports.config = {
     port: parseNumber("PORT", 3001),
-    rpcUrl: process.env.RPC_URL ?? "https://ethereum-sepolia-rpc.publicnode.com",
+    rpcUrl: process.env.RPC_URL ?? "http://127.0.0.1:8545",
     chainId: parseNumber("CHAIN_ID", 11155111),
-    tokenAddress: parseAddress("TOKEN_ADDRESS", "0x07B5A5ADaCedF233AADbe3f2862aac7ae21fBc0d"),
+    tokenAddress: parseAddress("TOKEN_ADDRESS", "0x5FbDB2315678afecb367f032d93F642f64180aa3"),
     startBlock: BigInt(parseNumber("START_BLOCK", 10420689)),
     syncIntervalMs: parseNumber("SYNC_INTERVAL_MS", 15000),
     syncBatchSize: BigInt(parseNumber("SYNC_BATCH_SIZE", 2000)),

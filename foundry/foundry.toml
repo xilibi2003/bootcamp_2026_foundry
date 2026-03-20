@@ -6,6 +6,7 @@ libs = ["lib"]
 # ── RPC 端点 ──
 [rpc_endpoints]
 sepolia = "${SEPOLIA_RPC_URL}"
+local = "http://127.0.0.1:8545"
 
 # ── Etherscan 开源验证 ──
 [etherscan]
