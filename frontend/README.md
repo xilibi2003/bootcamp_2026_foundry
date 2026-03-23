@@ -1,13 +1,14 @@
 # Token Bank Frontend
 
-这是一个独立的 Next.js 前端，使用 `viem` 与 `MyToken` 和 `TokenBank` 合约交互。
+这是一个独立的 Next.js 前端，使用 `viem` 与 `MyPermitToken` 和 `TokenBank` 合约交互。
 
 ## 功能
 
 - 连接钱包
 - 显示当前用户钱包中的 Token 余额
 - 显示当前用户已存入 `TokenBank` 的金额
-- 输入金额并执行存款
+- 输入金额并执行 `approve + deposit` 存款
+- 输入金额并执行 `permitDeposit` 离线签名存款
 - 输入金额并执行取款
 
 ## 配置
@@ -22,13 +23,14 @@ cp .env.example .env.local
 
 - `NEXT_PUBLIC_TOKEN_ADDRESS`
 - `NEXT_PUBLIC_TOKEN_BANK_ADDRESS`
+- `NEXT_PUBLIC_TOKEN_NAME`
 
 当前 `.env.example` 已按仓库中的 Anvil 广播记录预填：
 
 - `NEXT_PUBLIC_RPC_URL=http://127.0.0.1:8545`
 - `NEXT_PUBLIC_CHAIN_ID=31337`
 - `NEXT_PUBLIC_CHAIN_NAME=Anvil`
-- `MyToken=0x5FbDB2315678afecb367f032d93F642f64180aa3`
+- `MyPermitToken=0x5FbDB2315678afecb367f032d93F642f64180aa3`
 - `TokenBank=0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512`
 
 如果你重启过 Anvil 并重新部署过合约，这两个地址可能会变化，需要同步更新。

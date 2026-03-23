@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 contract TokenBank {
@@ -31,6 +32,35 @@ contract TokenBank {
         token.safeTransferFrom(msg.sender, address(this), amount);
 
         // 更新用户在 TokenBank 的余额记录
+        balances[msg.sender] += amount;
+
+        emit Deposited(msg.sender, amount);
+    }
+
+    /**
+     * @dev 通过 EIP-2612 permit 完成离线签名授权后直接存款。
+     * 用户无需提前单独调用 approve，只需提交签名参数即可完成授权和存款。
+     */
+    function permitDeposit(
+        uint256 amount,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external {
+        require(amount > 0, "Deposit amount must be > 0");
+
+        IERC20Permit(address(token)).permit(
+            msg.sender,
+            address(this),
+            amount,
+            deadline,
+            v,
+            r,
+            s
+        );
+
+        token.safeTransferFrom(msg.sender, address(this), amount);
         balances[msg.sender] += amount;
 
         emit Deposited(msg.sender, amount);

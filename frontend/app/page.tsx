@@ -7,6 +7,7 @@ import {
   custom,
   defineChain,
   formatUnits,
+  parseSignature,
   parseUnits,
 } from "viem";
 import type { Address, EIP1193Provider } from "viem";
@@ -68,6 +69,7 @@ export default function HomePage() {
   const [walletBalance, setWalletBalance] = useState<bigint>(0n);
   const [bankBalance, setBankBalance] = useState<bigint>(0n);
   const [depositAmount, setDepositAmount] = useState("");
+  const [permitDepositAmount, setPermitDepositAmount] = useState("");
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const [status, setStatus] = useState("请先连接钱包。");
   const [isLoading, setIsLoading] = useState(false);
@@ -204,6 +206,87 @@ export default function HomePage() {
       setStatus(`存款成功，已存入 ${depositAmount} ${config.tokenSymbol}。`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "存款失败。");
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  async function submitPermitDeposit() {
+    if (!account || !window.ethereum) {
+      setStatus("请先连接钱包。");
+      return;
+    }
+
+    if (!permitDepositAmount) {
+      setStatus("请输入要离线签名存款的金额。");
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      setStatus("正在签名 permit 并发起离线授权存款...");
+
+      const walletClient = createWalletClient({
+        chain,
+        transport: custom(window.ethereum),
+      });
+      const amount = parseUnits(permitDepositAmount, config.tokenDecimals);
+      const nonce = await publicClient.readContract({
+        address: config.tokenAddress,
+        abi: tokenAbi,
+        functionName: "nonces",
+        args: [account],
+      });
+      const deadline = BigInt(Math.floor(Date.now() / 1000) + 30 * 60);
+
+      const signature = await walletClient.signTypedData({
+        account,
+        domain: {
+          name: config.tokenName,
+          version: "1",
+          chainId: config.chainId,
+          verifyingContract: config.tokenAddress,
+        },
+        primaryType: "Permit",
+        types: {
+          Permit: [
+            { name: "owner", type: "address" },
+            { name: "spender", type: "address" },
+            { name: "value", type: "uint256" },
+            { name: "nonce", type: "uint256" },
+            { name: "deadline", type: "uint256" },
+          ],
+        },
+        message: {
+          owner: account,
+          spender: config.tokenBankAddress,
+          value: amount,
+          nonce,
+          deadline,
+        },
+      });
+
+      const parsedSignature = parseSignature(signature);
+      const v =
+        parsedSignature.v !== undefined
+          ? Number(parsedSignature.v)
+          : parsedSignature.yParity === 0
+            ? 27
+            : 28;
+      const permitDepositHash = await walletClient.writeContract({
+        account,
+        address: config.tokenBankAddress,
+        abi: tokenBankAbi,
+        functionName: "permitDeposit",
+        args: [amount, deadline, v, parsedSignature.r, parsedSignature.s],
+      });
+      await publicClient.waitForTransactionReceipt({ hash: permitDepositHash });
+
+      await refreshBalances(account);
+      setPermitDepositAmount("");
+      setStatus(`离线签名存款成功，已存入 ${permitDepositAmount} ${config.tokenSymbol}。`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "离线签名存款失败。");
     } finally {
       setIsLoading(false);
     }
@@ -415,6 +498,15 @@ export default function HomePage() {
             onChange={setDepositAmount}
             buttonLabel="授权并存款"
             onSubmit={submitDeposit}
+            disabled={isLoading || !hasConfiguredContracts()}
+          />
+          <ActionCard
+            title="permitDeposit 离线签名存款"
+            description={`输入要存入的 ${config.tokenSymbol} 数量，前端会先用 EIP-2612 进行离线签名，再直接调用 TokenBank 的 permitDeposit。`}
+            value={permitDepositAmount}
+            onChange={setPermitDepositAmount}
+            buttonLabel="签名并存款"
+            onSubmit={submitPermitDeposit}
             disabled={isLoading || !hasConfiguredContracts()}
           />
           <ActionCard

@@ -3,12 +3,18 @@ pragma solidity ^0.8.20;
 
 import {Test, console} from "forge-std/Test.sol";
 import {TokenBank} from "../src/TokenBank.sol";
+import {MyPermitToken} from "../src/MyPermitToken.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {
     SafeERC20
 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 contract TokenBankTest is Test {
+    bytes32 internal constant PERMIT_TYPEHASH =
+        keccak256(
+            "Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)"
+        );
+
     TokenBank public bank;
     IERC20 public usdt;
 
@@ -90,5 +96,65 @@ contract TokenBankTest is Test {
         );
 
         vm.stopPrank();
+    }
+
+    function test_PermitDepositWithMyPermitToken() public {
+        uint256 alicePrivateKey = 0xA11CE;
+        address permitAlice = vm.addr(alicePrivateKey);
+        uint256 depositAmount = 250 * 10 ** 18;
+        uint256 deadline = block.timestamp + 1 days;
+
+        MyPermitToken permitToken = new MyPermitToken(permitAlice);
+        TokenBank permitBank = new TokenBank(address(permitToken));
+
+        uint256 nonce = permitToken.nonces(permitAlice);
+        bytes32 structHash = keccak256(
+            abi.encode(
+                PERMIT_TYPEHASH,
+                permitAlice,
+                address(permitBank),
+                depositAmount,
+                nonce,
+                deadline
+            )
+        );
+        bytes32 digest = keccak256(
+            abi.encodePacked(
+                "\x19\x01",
+                permitToken.DOMAIN_SEPARATOR(),
+                structHash
+            )
+        );
+
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(alicePrivateKey, digest);
+
+        vm.prank(permitAlice);
+        permitBank.permitDeposit(depositAmount, deadline, v, r, s);
+
+        assertEq(
+            permitToken.balanceOf(permitAlice),
+            permitToken.totalSupply() - depositAmount,
+            "Alice balance after permitDeposit mismatch"
+        );
+        assertEq(
+            permitToken.balanceOf(address(permitBank)),
+            depositAmount,
+            "Bank token balance mismatch"
+        );
+        assertEq(
+            permitBank.balances(permitAlice),
+            depositAmount,
+            "Bank logic balance mismatch"
+        );
+        assertEq(
+            permitToken.allowance(permitAlice, address(permitBank)),
+            0,
+            "Allowance should be consumed after deposit"
+        );
+        assertEq(
+            permitToken.nonces(permitAlice),
+            nonce + 1,
+            "Permit nonce should increment"
+        );
     }
 }
