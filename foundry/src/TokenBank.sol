@@ -5,6 +5,31 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
+interface ISignatureTransfer {
+    struct TokenPermissions {
+        address token;
+        uint256 amount;
+    }
+
+    struct PermitTransferFrom {
+        TokenPermissions permitted;
+        uint256 nonce;
+        uint256 deadline;
+    }
+
+    struct SignatureTransferDetails {
+        address to;
+        uint256 requestedAmount;
+    }
+
+    function permitTransferFrom(
+        PermitTransferFrom calldata permit,
+        SignatureTransferDetails calldata transferDetails,
+        address owner,
+        bytes calldata signature
+    ) external;
+}
+
 contract TokenBank {
     using SafeERC20 for IERC20;
 
@@ -63,6 +88,42 @@ contract TokenBank {
         token.safeTransferFrom(msg.sender, address(this), amount);
         balances[msg.sender] += amount;
 
+        emit Deposited(msg.sender, amount);
+    }
+
+    /**
+     * @dev 通过 Permit2 的签名转账能力完成存款。
+     * 用户需预先授权 Permit2 可操作 token，然后提交离线签名给 TokenBank，
+     * 由 TokenBank 调用 Permit2 将 token 转入本合约并完成记账。
+     */
+    function depositWithPermit2(
+        address permit2,
+        uint256 amount,
+        uint256 nonce,
+        uint256 deadline,
+        bytes calldata signature
+    ) external {
+        require(permit2 != address(0), "Permit2 address is zero");
+        require(amount > 0, "Deposit amount must be > 0");
+
+        ISignatureTransfer(permit2).permitTransferFrom(
+            ISignatureTransfer.PermitTransferFrom({
+                permitted: ISignatureTransfer.TokenPermissions({
+                    token: address(token),
+                    amount: amount
+                }),
+                nonce: nonce,
+                deadline: deadline
+            }),
+            ISignatureTransfer.SignatureTransferDetails({
+                to: address(this),
+                requestedAmount: amount
+            }),
+            msg.sender,
+            signature
+        );
+
+        balances[msg.sender] += amount;
         emit Deposited(msg.sender, amount);
     }
 

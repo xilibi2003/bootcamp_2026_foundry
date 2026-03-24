@@ -3,19 +3,27 @@ pragma solidity ^0.8.20;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {
     ReentrancyGuard
 } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IERC1363Receiver} from "./IERC1363Receiver.sol";
 
 contract NFTMarket is IERC1363Receiver, ReentrancyGuard {
+    using ECDSA for bytes32;
+
     struct Listing {
         address seller;
         uint256 price;
     }
 
+    bytes32 public constant PERMIT_WHITE_BUYER_TYPEHASH =
+        keccak256("PermitWhiteBuyer(address whitelist)");
+
     IERC20 public immutable paymentToken;
     IERC721 public immutable nft;
+    address public immutable whitelistSigner;
 
     mapping(uint256 tokenId => Listing) public listings;
 
@@ -31,12 +39,14 @@ contract NFTMarket is IERC1363Receiver, ReentrancyGuard {
         uint256 price
     );
 
-    constructor(address paymentToken_, address nft_) {
+    constructor(address paymentToken_, address nft_, address whitelistSigner_) {
         require(paymentToken_ != address(0), "invalid token");
         require(nft_ != address(0), "invalid nft");
+        require(whitelistSigner_ != address(0), "invalid signer");
 
         paymentToken = IERC20(paymentToken_);
         nft = IERC721(nft_);
+        whitelistSigner = whitelistSigner_;
     }
 
     // token
@@ -51,6 +61,41 @@ contract NFTMarket is IERC1363Receiver, ReentrancyGuard {
     }
 
     function buyNFT(uint256 tokenId) external nonReentrant {
+        revert("use permitBuy");
+    }
+
+    function PermitWhiteBuyer(
+        address whitelist,
+        bytes memory signature
+    ) public view returns (bool) {
+        return
+            getPermitWhiteBuyerDigest(whitelist).recover(signature) ==
+            whitelistSigner;
+    }
+
+    function getPermitWhiteBuyerDigest(
+        address whitelist
+    ) public view returns (bytes32) {
+        bytes32 structHash = keccak256(
+            abi.encode(PERMIT_WHITE_BUYER_TYPEHASH, whitelist)
+        );
+
+        bytes32 messageHash = keccak256(
+            abi.encode(address(this), block.chainid, structHash)
+        );
+
+        return MessageHashUtils.toEthSignedMessageHash(messageHash);
+    }
+
+    function permitBuy(
+        uint256 tokenId,
+        bytes calldata signature
+    ) external nonReentrant {
+        require(
+            PermitWhiteBuyer(msg.sender, signature),
+            "invalid whitelist signature"
+        );
+
         Listing memory listing = _getListing(tokenId);
 
         require(
@@ -68,9 +113,15 @@ contract NFTMarket is IERC1363Receiver, ReentrancyGuard {
         bytes calldata data
     ) external nonReentrant returns (bytes4) {
         require(msg.sender == address(paymentToken), "unsupported token");
-        require(data.length == 32, "invalid data");
+        (uint256 tokenId, bytes memory signature) = abi.decode(
+            data,
+            (uint256, bytes)
+        );
+        require(
+            PermitWhiteBuyer(from, signature),
+            "invalid whitelist signature"
+        );
 
-        uint256 tokenId = abi.decode(data, (uint256));
         Listing memory listing = _getListing(tokenId);
 
         _completePurchase(tokenId, from, listing, amount);
