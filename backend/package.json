@@ -8,6 +8,7 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "generate:transfers": "tsx src/scripts/generateTransfers.ts",
+    "read:esrnt-locks": "tsx src/scripts/readEsRntLocks.ts",
     "wallet": "tsx src/cliWallet.ts"
   },
   "dependencies": {

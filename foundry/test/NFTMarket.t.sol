@@ -97,13 +97,13 @@ contract NFTMarketTest is Test {
         token.approve(address(market), PRICE);
 
         vm.prank(outsider);
-        vm.expectRevert("invalid whitelist signature");
+        vm.expectRevert(NFTMarket.InvalidWhitelistSignature.selector);
         market.permitBuy(0, signature);
     }
 
     function test_RevertWhenDirectBuyNFTCalled() public {
         vm.prank(buyer);
-        vm.expectRevert("use permitBuy");
+        vm.expectRevert(NFTMarket.UsePermitBuy.selector);
         market.buyNFT(0);
     }
 
@@ -116,7 +116,7 @@ contract NFTMarketTest is Test {
         bytes memory signature = _signWhitelist(buyer2);
 
         vm.prank(buyer2);
-        vm.expectRevert("incorrect price");
+        vm.expectRevert(NFTMarket.IncorrectPrice.selector);
         token.transferAndCall(
             address(market),
             PRICE - 1,

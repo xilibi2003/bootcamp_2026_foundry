@@ -92,6 +92,12 @@ https://go.getblock.io/02667b699f05444ab2c64f9bff28f027
 
 
 
-  MyToken deployed at: 0x5FbDB2315678afecb367f032d93F642f64180aa3
-  TokenBank deployed at: 0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+forge snapshot test/NFTMarket.t.sol --snap v1_gas
+forge snapshot test/NFTMarket.t.sol --diff v1_gas
 
+forge test test/NFTMarket.t.sol --gas-report
+
+
+
+使用Viem 利用 getStorageAt 从链上读取 ESRnt ( 地址： 0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9 ， 在 anvil 网络）的 _locks 数组中的所有元素值，并打印出如下内容：
+locks[0]: user:…… ,startTime:……,amount:……

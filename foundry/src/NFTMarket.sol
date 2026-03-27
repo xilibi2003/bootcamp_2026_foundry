@@ -4,7 +4,9 @@ pragma solidity ^0.8.20;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
+import {
+    MessageHashUtils
+} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {
     ReentrancyGuard
 } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
@@ -13,9 +15,25 @@ import {IERC1363Receiver} from "./IERC1363Receiver.sol";
 contract NFTMarket is IERC1363Receiver, ReentrancyGuard {
     using ECDSA for bytes32;
 
+    error InvalidToken();
+    error InvalidNft();
+    error InvalidSigner();
+    error PriceIsZero();
+    error PriceOverflow();
+    error NotOwner();
+    error AlreadyListed();
+    error UsePermitBuy();
+    error InvalidWhitelistSignature();
+    error TokenTransferFailed();
+    error UnsupportedToken();
+    error IncorrectPrice();
+    error SellerNotOwner();
+    error PaySellerFailed();
+    error NotListed();
+
     struct Listing {
-        address seller;
-        uint256 price;
+        address seller; // 20 byte => 160 bit
+        uint96 price; // 12 byte => 96 bit
     }
 
     bytes32 public constant PERMIT_WHITE_BUYER_TYPEHASH =
@@ -40,9 +58,9 @@ contract NFTMarket is IERC1363Receiver, ReentrancyGuard {
     );
 
     constructor(address paymentToken_, address nft_, address whitelistSigner_) {
-        require(paymentToken_ != address(0), "invalid token");
-        require(nft_ != address(0), "invalid nft");
-        require(whitelistSigner_ != address(0), "invalid signer");
+        if (paymentToken_ == address(0)) revert InvalidToken();
+        if (nft_ == address(0)) revert InvalidNft();
+        if (whitelistSigner_ == address(0)) revert InvalidSigner();
 
         paymentToken = IERC20(paymentToken_);
         nft = IERC721(nft_);
@@ -51,17 +69,19 @@ contract NFTMarket is IERC1363Receiver, ReentrancyGuard {
 
     // token
     function list(uint256 tokenId, uint256 price) external nonReentrant {
-        require(price > 0, "price is zero");
-        require(nft.ownerOf(tokenId) == msg.sender, "not owner");
-        require(listings[tokenId].seller == address(0), "already listed");
+        if (price == 0) revert PriceIsZero();
+        if (price > type(uint96).max) revert PriceOverflow();
+        if (nft.ownerOf(tokenId) != msg.sender) revert NotOwner();
+        if (listings[tokenId].seller != address(0)) revert AlreadyListed();
 
-        listings[tokenId] = Listing({seller: msg.sender, price: price});
+        // forge-lint: disable-next-line(unsafe-typecast)
+        listings[tokenId] = Listing({seller: msg.sender, price: uint96(price)});
 
         emit Listed(msg.sender, tokenId, price);
     }
 
-    function buyNFT(uint256 tokenId) external nonReentrant {
-        revert("use permitBuy");
+    function buyNFT(uint256) external pure {
+        revert UsePermitBuy();
     }
 
     function PermitWhiteBuyer(
@@ -91,19 +111,17 @@ contract NFTMarket is IERC1363Receiver, ReentrancyGuard {
         uint256 tokenId,
         bytes calldata signature
     ) external nonReentrant {
-        require(
-            PermitWhiteBuyer(msg.sender, signature),
-            "invalid whitelist signature"
-        );
+        if (!PermitWhiteBuyer(msg.sender, signature)) {
+            revert InvalidWhitelistSignature();
+        }
 
         Listing memory listing = _getListing(tokenId);
 
-        require(
-            paymentToken.transferFrom(msg.sender, address(this), listing.price),
-            "token transfer failed"
-        );
+        if (!paymentToken.transferFrom(msg.sender, listing.seller, listing.price)) {
+            revert TokenTransferFailed();
+        }
 
-        _completePurchase(tokenId, msg.sender, listing, listing.price);
+        _completePurchase(tokenId, msg.sender, listing, listing.price, true);
     }
 
     function onTransferReceived(
@@ -112,19 +130,18 @@ contract NFTMarket is IERC1363Receiver, ReentrancyGuard {
         uint256 amount,
         bytes calldata data
     ) external nonReentrant returns (bytes4) {
-        require(msg.sender == address(paymentToken), "unsupported token");
+        if (msg.sender != address(paymentToken)) revert UnsupportedToken();
         (uint256 tokenId, bytes memory signature) = abi.decode(
             data,
             (uint256, bytes)
         );
-        require(
-            PermitWhiteBuyer(from, signature),
-            "invalid whitelist signature"
-        );
+        if (!PermitWhiteBuyer(from, signature)) {
+            revert InvalidWhitelistSignature();
+        }
 
         Listing memory listing = _getListing(tokenId);
 
-        _completePurchase(tokenId, from, listing, amount);
+        _completePurchase(tokenId, from, listing, amount, false);
 
         return IERC1363Receiver.onTransferReceived.selector;
     }
@@ -133,17 +150,17 @@ contract NFTMarket is IERC1363Receiver, ReentrancyGuard {
         uint256 tokenId,
         address buyer,
         Listing memory listing,
-        uint256 amount
+        uint256 amount,
+        bool alreadyPaidSeller
     ) private {
-        require(amount == listing.price, "incorrect price");
-        require(nft.ownerOf(tokenId) == listing.seller, "seller not owner");
+        if (amount != listing.price) revert IncorrectPrice();
+        if (nft.ownerOf(tokenId) != listing.seller) revert SellerNotOwner();
 
         delete listings[tokenId];
 
-        require(
-            paymentToken.transfer(listing.seller, amount),
-            "pay seller failed"
-        );
+        if (!alreadyPaidSeller && !paymentToken.transfer(listing.seller, amount)) {
+            revert PaySellerFailed();
+        }
         nft.transferFrom(listing.seller, buyer, tokenId);
 
         emit Purchased(buyer, listing.seller, tokenId, amount);
@@ -153,6 +170,6 @@ contract NFTMarket is IERC1363Receiver, ReentrancyGuard {
         uint256 tokenId
     ) private view returns (Listing memory listing) {
         listing = listings[tokenId];
-        require(listing.seller != address(0), "not listed");
+        if (listing.seller == address(0)) revert NotListed();
     }
 }
