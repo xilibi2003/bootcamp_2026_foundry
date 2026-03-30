@@ -1,18 +1,16 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import {
-    MessageHashUtils
-} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
-import {
-    ReentrancyGuard
-} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {IERC1363Receiver} from "./IERC1363Receiver.sol";
 
-contract NFTMarket is IERC1363Receiver, ReentrancyGuard {
+contract NFTMarket is Initializable, OwnableUpgradeable, UUPSUpgradeable, IERC1363Receiver {
     using ECDSA for bytes32;
 
     error InvalidToken();
@@ -30,41 +28,54 @@ contract NFTMarket is IERC1363Receiver, ReentrancyGuard {
     error SellerNotOwner();
     error PaySellerFailed();
     error NotListed();
+    error ReentrancyGuardReentrantCall();
 
     struct Listing {
         address seller; // 20 byte => 160 bit
         uint96 price; // 12 byte => 96 bit
     }
 
-    bytes32 public constant PERMIT_WHITE_BUYER_TYPEHASH =
-        keccak256("PermitWhiteBuyer(address whitelist)");
+    bytes32 public constant PERMIT_WHITE_BUYER_TYPEHASH = keccak256("PermitWhiteBuyer(address whitelist)");
 
-    IERC20 public immutable paymentToken;
-    IERC721 public immutable nft;
-    address public immutable whitelistSigner;
+    uint256 private constant NOT_ENTERED = 1;
+    uint256 private constant ENTERED = 2;
+
+    IERC20 public paymentToken;
+    IERC721 public nft;
+    address public whitelistSigner;
+    uint256 private _reentrancyStatus;
 
     mapping(uint256 tokenId => Listing) public listings;
 
-    event Listed(
-        address indexed seller,
-        uint256 indexed tokenId,
-        uint256 price
-    );
-    event Purchased(
-        address indexed buyer,
-        address indexed seller,
-        uint256 indexed tokenId,
-        uint256 price
-    );
+    event Listed(address indexed seller, uint256 indexed tokenId, uint256 price);
+    event Purchased(address indexed buyer, address indexed seller, uint256 indexed tokenId, uint256 price);
 
-    constructor(address paymentToken_, address nft_, address whitelistSigner_) {
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(address paymentToken_, address nft_, address whitelistSigner_, address initialOwner)
+        public
+        initializer
+    {
         if (paymentToken_ == address(0)) revert InvalidToken();
         if (nft_ == address(0)) revert InvalidNft();
         if (whitelistSigner_ == address(0)) revert InvalidSigner();
+        if (initialOwner == address(0)) revert InvalidSigner();
 
         paymentToken = IERC20(paymentToken_);
         nft = IERC721(nft_);
         whitelistSigner = whitelistSigner_;
+        _reentrancyStatus = NOT_ENTERED;
+        __Ownable_init(initialOwner);
+    }
+
+    modifier nonReentrant() {
+        if (_reentrancyStatus == ENTERED) revert ReentrancyGuardReentrantCall();
+        _reentrancyStatus = ENTERED;
+        _;
+        _reentrancyStatus = NOT_ENTERED;
     }
 
     // token
@@ -84,33 +95,19 @@ contract NFTMarket is IERC1363Receiver, ReentrancyGuard {
         revert UsePermitBuy();
     }
 
-    function PermitWhiteBuyer(
-        address whitelist,
-        bytes memory signature
-    ) public view returns (bool) {
-        return
-            getPermitWhiteBuyerDigest(whitelist).recover(signature) ==
-            whitelistSigner;
+    function PermitWhiteBuyer(address whitelist, bytes memory signature) public view returns (bool) {
+        return getPermitWhiteBuyerDigest(whitelist).recover(signature) == whitelistSigner;
     }
 
-    function getPermitWhiteBuyerDigest(
-        address whitelist
-    ) public view returns (bytes32) {
-        bytes32 structHash = keccak256(
-            abi.encode(PERMIT_WHITE_BUYER_TYPEHASH, whitelist)
-        );
+    function getPermitWhiteBuyerDigest(address whitelist) public view returns (bytes32) {
+        bytes32 structHash = keccak256(abi.encode(PERMIT_WHITE_BUYER_TYPEHASH, whitelist));
 
-        bytes32 messageHash = keccak256(
-            abi.encode(address(this), block.chainid, structHash)
-        );
+        bytes32 messageHash = keccak256(abi.encode(address(this), block.chainid, structHash));
 
         return MessageHashUtils.toEthSignedMessageHash(messageHash);
     }
 
-    function permitBuy(
-        uint256 tokenId,
-        bytes calldata signature
-    ) external nonReentrant {
+    function permitBuy(uint256 tokenId, bytes calldata signature) external virtual nonReentrant {
         if (!PermitWhiteBuyer(msg.sender, signature)) {
             revert InvalidWhitelistSignature();
         }
@@ -124,17 +121,13 @@ contract NFTMarket is IERC1363Receiver, ReentrancyGuard {
         _completePurchase(tokenId, msg.sender, listing, listing.price, true);
     }
 
-    function onTransferReceived(
-        address,
-        address from,
-        uint256 amount,
-        bytes calldata data
-    ) external nonReentrant returns (bytes4) {
+    function onTransferReceived(address, address from, uint256 amount, bytes calldata data)
+        external
+        nonReentrant
+        returns (bytes4)
+    {
         if (msg.sender != address(paymentToken)) revert UnsupportedToken();
-        (uint256 tokenId, bytes memory signature) = abi.decode(
-            data,
-            (uint256, bytes)
-        );
+        (uint256 tokenId, bytes memory signature) = abi.decode(data, (uint256, bytes));
         if (!PermitWhiteBuyer(from, signature)) {
             revert InvalidWhitelistSignature();
         }
@@ -152,7 +145,7 @@ contract NFTMarket is IERC1363Receiver, ReentrancyGuard {
         Listing memory listing,
         uint256 amount,
         bool alreadyPaidSeller
-    ) private {
+    ) internal virtual {
         if (amount != listing.price) revert IncorrectPrice();
         if (nft.ownerOf(tokenId) != listing.seller) revert SellerNotOwner();
 
@@ -166,10 +159,10 @@ contract NFTMarket is IERC1363Receiver, ReentrancyGuard {
         emit Purchased(buyer, listing.seller, tokenId, amount);
     }
 
-    function _getListing(
-        uint256 tokenId
-    ) private view returns (Listing memory listing) {
+    function _getListing(uint256 tokenId) internal view virtual returns (Listing memory listing) {
         listing = listings[tokenId];
         if (listing.seller == address(0)) revert NotListed();
     }
+
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 }
