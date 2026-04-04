@@ -4,15 +4,37 @@ pragma solidity ^0.8.20;
 import {Test} from "forge-std/Test.sol";
 import {ERC20MemeFactory} from "../src/ERC20MemeFactory.sol";
 import {ERC20Meme} from "../src/ERC20Meme.sol";
+import {MyToken} from "../src/MyToken.sol";
+import {
+    MockUniswapV2Factory,
+    MockUniswapV2Pair,
+    MockUniswapV2Router02
+} from "./mocks/MockUniswapV2.sol";
 
 contract ERC20MemeFactoryTest is Test {
     ERC20MemeFactory internal factory;
+    MyToken internal myToken;
+    MockUniswapV2Factory internal uniswapFactory;
+    MockUniswapV2Pair internal pair;
+    MockUniswapV2Router02 internal router;
 
     address internal alice = makeAddr("alice");
     address internal bob = makeAddr("bob");
+    address internal weth = makeAddr("weth");
+
+    uint256 internal constant ROUTER_MEME_LIQUIDITY = 120 ether;
 
     function setUp() public {
-        factory = new ERC20MemeFactory();
+        myToken = new MyToken(address(this));
+        uniswapFactory = new MockUniswapV2Factory();
+        router = new MockUniswapV2Router02(weth);
+        factory = new ERC20MemeFactory(
+            address(myToken),
+            address(uniswapFactory),
+            address(router)
+        );
+
+        myToken.transfer(address(factory), 500 ether);
         vm.deal(alice, 100 ether);
         vm.deal(bob, 100 ether);
     }
@@ -53,15 +75,27 @@ contract ERC20MemeFactoryTest is Test {
         ERC20Meme token = ERC20Meme(tokenAddr);
         uint256 aliceBefore = alice.balance;
         uint256 factoryBefore = address(factory).balance;
+        uint256 myTokenFactoryBefore = myToken.balanceOf(address(factory));
 
         vm.prank(bob);
         uint256 mintedAmount = factory.mintMeme{value: 1 ether}(tokenAddr);
 
+        uint256 liquidityMeme = (25 ether * 5) / 100;
+        uint256 userAmount = 25 ether - liquidityMeme;
+        uint256 liquidityMyToken = (liquidityMeme * 1 ether) / 25 ether;
+
         assertEq(mintedAmount, 25 ether);
-        assertEq(token.balanceOf(bob), 25 ether);
+        assertEq(token.balanceOf(bob), userAmount);
         assertEq(token.totalSupply(), 25 ether);
         assertEq(alice.balance, aliceBefore + 0.05 ether);
         assertEq(address(factory).balance, factoryBefore + 0.95 ether);
+        assertEq(token.balanceOf(address(router)), liquidityMeme);
+        assertEq(router.lastLiquidityAmountMeme(), liquidityMeme);
+        assertEq(router.lastLiquidityAmountMyToken(), liquidityMyToken);
+        assertEq(
+            myToken.balanceOf(address(factory)),
+            myTokenFactoryBefore - liquidityMyToken
+        );
     }
 
     function test_MintMeme_RevertWhenExceedsMaxSupply() public {
@@ -88,6 +122,101 @@ contract ERC20MemeFactoryTest is Test {
     function test_MintMeme_RevertForUnknownToken() public {
         vm.expectRevert(ERC20MemeFactory.InvalidToken.selector);
         factory.mintMeme{value: 1 ether}(address(0x1234));
+    }
+
+    function test_MintMeme_FirstLiquidityUsesMintPrice() public {
+        vm.prank(alice);
+        address tokenAddr = factory.deployMeme(
+            "MOON",
+            1_000_000 ether,
+            100 ether,
+            1 ether
+        );
+
+        vm.prank(bob);
+        factory.mintMeme{value: 1 ether}(tokenAddr);
+
+        assertEq(router.lastLiquidityAmountMeme(), 5 ether);
+        assertEq(router.lastLiquidityAmountMyToken(), 0.05 ether);
+    }
+
+    function test_BuyMeme_UsesUniswapWhenPriceBetterThanMintFee() public {
+        vm.prank(alice);
+        address tokenAddr = factory.deployMeme(
+            "PUMP",
+            1_000_000 ether,
+            100 ether,
+            1 ether
+        );
+
+        ERC20Meme token = ERC20Meme(tokenAddr);
+
+        pair = new MockUniswapV2Pair();
+        pair.initialize(address(myToken), tokenAddr);
+        pair.setReserves(uint112(10 ether), uint112(1_000 ether));
+        uniswapFactory.setPair(address(myToken), tokenAddr, address(pair));
+
+        uint256[] memory quoteAmounts = new uint256[](3);
+        quoteAmounts[0] = 1 ether;
+        quoteAmounts[1] = 50 ether;
+        quoteAmounts[2] = 120 ether;
+        router.setQuoteAmounts(quoteAmounts);
+
+        uint256[] memory swapAmounts = new uint256[](3);
+        swapAmounts[0] = 1 ether;
+        swapAmounts[1] = 50 ether;
+        swapAmounts[2] = 120 ether;
+        router.setSwapAmounts(swapAmounts);
+
+        vm.prank(alice);
+        factory.mintMeme{value: 1 ether}(tokenAddr);
+
+        vm.prank(bob);
+        factory.mintMeme{value: 1 ether}(tokenAddr);
+
+        vm.prank(alice);
+        factory.mintMeme{value: 1 ether}(tokenAddr);
+
+        vm.prank(alice);
+        token.transfer(address(router), ROUTER_MEME_LIQUIDITY);
+
+        uint256 bobBefore = token.balanceOf(bob);
+        uint256 deadline = block.timestamp + 1 hours;
+
+        vm.prank(bob);
+        uint256[] memory amounts = factory.buyMeme{value: 1 ether}(
+            tokenAddr,
+            110 ether,
+            deadline
+        );
+
+        assertEq(amounts[2], 120 ether);
+        assertEq(token.balanceOf(bob), bobBefore + 120 ether);
+        assertEq(router.lastSwapValue(), 1 ether);
+        assertEq(router.lastSwapTo(), bob);
+        assertEq(router.lastSwapPath(0), weth);
+        assertEq(router.lastSwapPath(1), address(myToken));
+        assertEq(router.lastSwapPath(2), tokenAddr);
+    }
+
+    function test_BuyMeme_RevertWhenUniswapPriceNotBetter() public {
+        vm.prank(alice);
+        address tokenAddr = factory.deployMeme(
+            "BEAR",
+            1_000_000 ether,
+            100 ether,
+            1 ether
+        );
+
+        uint256[] memory quoteAmounts = new uint256[](3);
+        quoteAmounts[0] = 1 ether;
+        quoteAmounts[1] = 40 ether;
+        quoteAmounts[2] = 100 ether;
+        router.setQuoteAmounts(quoteAmounts);
+
+        vm.prank(bob);
+        vm.expectRevert(ERC20MemeFactory.UniswapPriceNotBetter.selector);
+        factory.buyMeme{value: 1 ether}(tokenAddr, 99 ether, block.timestamp + 1);
     }
 
     function testFuzz_DeploysIndependentClones(
