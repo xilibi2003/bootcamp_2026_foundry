@@ -13,6 +13,7 @@ contract Bank is IBank {
 
     event Deposited(address indexed user, uint256 amount, uint256 userBalance);
     event Withdrawn(address indexed admin, address indexed to, uint256 amount);
+    event AdminTransferred(address indexed previousAdmin, address indexed newAdmin);
 
     modifier onlyAdmin() {
         require(msg.sender == admin, "Only admin");
@@ -21,6 +22,15 @@ contract Bank is IBank {
 
     constructor() {
         admin = msg.sender;
+    }
+
+    function transferAdmin(address newAdmin) external onlyAdmin {
+        require(newAdmin != address(0), "Invalid admin");
+
+        address previousAdmin = admin;
+        admin = newAdmin;
+
+        emit AdminTransferred(previousAdmin, newAdmin);
     }
 
     // 支持 Metamask 等钱包直接向合约地址转账
